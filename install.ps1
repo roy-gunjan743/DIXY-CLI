@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Stop"
 
 # DIXY public distribution installer
 # Source repository:  roy-gunjan743/DIXY
@@ -21,7 +21,7 @@ function Assert-Command([string]$Name) {
 Assert-Command "java"
 Assert-Command "curl"
 
-$javaVersion = (& cmd.exe /c "java -version 2>&1" | Select-String 'version' | Select-Object -First 1).ToString()
+$javaVersion = (& java -version 2>&1 | Select-String 'version' | Select-Object -First 1).ToString()
 Write-Host "[dixy-install] Java detected: $javaVersion"
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
@@ -78,4 +78,3 @@ Write-Host "    dixy.bat path\to\your-application.jar"
 Write-Host ""
 Write-Host "[dixy-install] To install a specific release:"
 Write-Host "    `$env:DIXY_VERSION='v6.8.0'; irm https://raw.githubusercontent.com/roy-gunjan743/DIXY-CLI/main/install.ps1 | iex"
-
