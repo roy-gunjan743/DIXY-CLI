@@ -1,70 +1,80 @@
-# ─────────────────────────────────────────────────────────────────────
-#  DIXY installer (PowerShell) — fetches only the prebuilt release
-#  artifacts (dixy-agent.jar, dixy-cli.jar, dixy.bat) from a GitHub
-#  Release. Never clones the repo, never touches source.
-#
-#  Usage:
-#    irm https://raw.githubusercontent.com/roy-gunjan743/DIXY/main/install.ps1 | iex
-#
-#  Optional (set before running):
-#    $env:DIXY_INSTALL_DIR = "C:\tools\dixy"
-#    $env:DIXY_VERSION     = "v1.2.0"
-# ─────────────────────────────────────────────────────────────────────
-
 $ErrorActionPreference = "Stop"
 
-$Repo       = "roy-gunjan743/DIXY"
-$InstallDir = if ($env:DIXY_INSTALL_DIR) { $env:DIXY_INSTALL_DIR } else { "$env:USERPROFILE\.dixy" }
-$Version    = if ($env:DIXY_VERSION) { $env:DIXY_VERSION } else { "latest" }
+# DIXY public distribution installer
+# Source repository:  roy-gunjan743/DIXY
+# Public releases:   roy-gunjan743/DIXY-CLI
 
-function Assert-Command($name) {
-    if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
-        Write-Error "[ERROR] '$name' is required but was not found on PATH."
-        exit 1
+$Repo = "roy-gunjan743/DIXY-CLI"
+$InstallDir = if ($env:DIXY_INSTALL_DIR) {
+    $env:DIXY_INSTALL_DIR
+} else {
+    Join-Path $env:USERPROFILE ".dixy"
+}
+$Version = if ($env:DIXY_VERSION) { $env:DIXY_VERSION } else { "latest" }
+
+function Assert-Command([string]$Name) {
+    if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
+        throw "[ERROR] '$Name' is required but was not found on PATH."
     }
 }
-Assert-Command java
 
-Write-Host "[dixy-install] Target directory: $InstallDir"
+Assert-Command "java"
+Assert-Command "curl"
+
+$javaVersion = (& java -version 2>&1 | Select-String 'version' | Select-Object -First 1).ToString()
+Write-Host "[dixy-install] Java detected: $javaVersion"
+
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
-$releaseUrl = if ($Version -eq "latest") {
-    "https://api.github.com/repos/$Repo/releases/latest"
+if ($Version -eq "latest") {
+    $BaseUrl = "https://github.com/$Repo/releases/latest/download"
 } else {
-    "https://api.github.com/repos/$Repo/releases/tags/$Version"
+    $BaseUrl = "https://github.com/$Repo/releases/download/$Version"
 }
 
-Write-Host "[dixy-install] Resolving release ($Version)..."
-try {
-    $release = Invoke-RestMethod -Uri $releaseUrl -Headers @{ "User-Agent" = "dixy-installer" }
-} catch {
-    Write-Error "[ERROR] Could not reach $releaseUrl - check the version/tag or your network."
-    exit 1
-}
+function Download-Asset([string]$Name) {
+    $url = "$BaseUrl/$Name"
+    $destination = Join-Path $InstallDir $Name
 
-Write-Host "[dixy-install] Installing release: $($release.tag_name)"
+    Write-Host "[dixy-install] Downloading $Name..."
+    & curl.exe -fL --retry 3 --retry-delay 2 $url -o $destination
 
-# Only these three assets are ever requested — GitHub's auto-generated
-# "Source code (zip)" link is never touched.
-$assetsWanted = @("dixy-agent.jar", "dixy-cli.jar", "dixy.bat")
-
-foreach ($name in $assetsWanted) {
-    $asset = $release.assets | Where-Object { $_.name -eq $name }
-    if (-not $asset) {
-        Write-Error "[ERROR] Release $($release.tag_name) has no asset named '$name'."
-        exit 1
+    if ($LASTEXITCODE -ne 0) {
+        throw "[ERROR] Failed to download $Name from $url"
     }
-    Write-Host "[dixy-install] Downloading $name..."
-    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile (Join-Path $InstallDir $name)
+}
+
+Write-Host "[dixy-install] Installing DIXY $Version..."
+Write-Host "[dixy-install] Target directory: $InstallDir"
+
+Download-Asset "dixy-agent.jar"
+Download-Asset "dixy-cli.jar"
+Download-Asset "dixy.bat"
+
+# Add the DIXY directory to the current user's PATH.
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$pathEntries = @()
+if ($userPath) {
+    $pathEntries = $userPath -split ';' | Where-Object { $_ -and $_.Trim() }
+}
+
+$alreadyPresent = $pathEntries | Where-Object {
+    [string]::Equals($_.TrimEnd('\'), $InstallDir.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+if (-not $alreadyPresent) {
+    $newUserPath = (($pathEntries + $InstallDir) -join ';')
+    [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
+    Write-Host "[dixy-install] Added $InstallDir to your user PATH."
+    Write-Host "[dixy-install] Open a NEW PowerShell/Command Prompt window before using 'dixy'."
 }
 
 Write-Host ""
-Write-Host "[dixy-install] Done. Installed to: $InstallDir"
-
-# Offer to add to PATH for this user
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($userPath -notlike "*$InstallDir*") {
-    Write-Host "[dixy-install] Add $InstallDir to your PATH to run 'dixy' from anywhere:"
-    Write-Host "    [Environment]::SetEnvironmentVariable('Path', `"`$env:Path;$InstallDir`", 'User')"
-}
-Write-Host "[dixy-install] Run it with: $InstallDir\dixy.bat"
+Write-Host "[dixy-install] DIXY installed successfully."
+Write-Host "[dixy-install] Location: $InstallDir"
+Write-Host ""
+Write-Host "[dixy-install] Usage:"
+Write-Host "    dixy.bat path\to\your-application.jar"
+Write-Host ""
+Write-Host "[dixy-install] To install a specific release:"
+Write-Host "    `$env:DIXY_VERSION='v6.8.0'; irm https://raw.githubusercontent.com/roy-gunjan743/DIXY-CLI/main/install.ps1 | iex"
