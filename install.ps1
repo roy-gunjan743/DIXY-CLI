@@ -21,7 +21,23 @@ function Assert-Command([string]$Name) {
 Assert-Command "java"
 Assert-Command "curl"
 
-$javaVersion = (& java -version 2>&1 | Select-String 'version' | Select-Object -First 1).ToString()
+function Get-JavaVersionString {
+    $prevEAP = $ErrorActionPreference
+    $prevNativeEAP = $PSNativeCommandUseErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    if ($null -ne $prevNativeEAP) { $PSNativeCommandUseErrorActionPreference = $false }
+    try {
+        $rawOutput = & java -version 2>&1 | Out-String
+    } finally {
+        $ErrorActionPreference = $prevEAP
+        if ($null -ne $prevNativeEAP) { $PSNativeCommandUseErrorActionPreference = $prevNativeEAP }
+    }
+    $line = ($rawOutput -split "`r?`n" | Where-Object { $_ -match 'version' } | Select-Object -First 1)
+    if (-not $line) { throw "[ERROR] Could not detect Java version from 'java -version' output." }
+    return $line.Trim()
+}
+
+$javaVersion = Get-JavaVersionString
 Write-Host "[dixy-install] Java detected: $javaVersion"
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
