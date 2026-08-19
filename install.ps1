@@ -1,67 +1,81 @@
 $ErrorActionPreference = "Stop"
 
-# DIXY public distribution installer
-# Source repository:  roy-gunjan743/DIXY
-# Public releases:   roy-gunjan743/DIXY-CLI
+# ============================================================
+# DIXY Windows Installer
+# ============================================================
 
 $Repo = "roy-gunjan743/DIXY-CLI"
+
 $InstallDir = if ($env:DIXY_INSTALL_DIR) {
     $env:DIXY_INSTALL_DIR
 } else {
     Join-Path $env:USERPROFILE ".dixy"
 }
-$Version = if ($env:DIXY_VERSION) { $env:DIXY_VERSION } else { "latest" }
 
-function Assert-Command([string]$Name) {
-    if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
-        throw "[ERROR] '$Name' is required but was not found on PATH."
-    }
+$Version = if ($env:DIXY_VERSION) {
+    $env:DIXY_VERSION
+} else {
+    "latest"
 }
 
-Assert-Command "java"
-Assert-Command "curl"
+Write-Host ""
+Write-Host "========================================"
+Write-Host "          DIXY CLI INSTALLER"
+Write-Host "========================================"
+Write-Host ""
 
-function Get-JavaVersionString {
-    $prevEAP = $ErrorActionPreference
+# ============================================================
+# Check Java
+# ============================================================
 
-    try {
-        $ErrorActionPreference = "SilentlyContinue"
+Write-Host "[DIXY] Checking Java..."
 
-        $rawOutput = (& java -version 2>&1 | Out-String).Trim()
+$javaCommand = Get-Command java.exe -ErrorAction SilentlyContinue
 
-        if ([string]::IsNullOrWhiteSpace($rawOutput)) {
-            throw "[ERROR] Java is installed but 'java -version' returned no output."
-        }
-
-        # Java normally prints:
-        # java version "21.0.11"
-        # openjdk version "21.0.11" 2024-04-16
-        # openjdk version "17.0.12" 2024-07-16
-        if ($rawOutput -match '(?i)(?:java|openjdk).*?version\s+"([^"]+)"') {
-            return $Matches[1]
-        }
-
-        # Fallback for unusual Java distributions
-        if ($rawOutput -match '(?i)version\s+["'']?([0-9]+(?:\.[0-9]+)*)') {
-            return $Matches[1]
-        }
-
-        # Don't fail installation just because version formatting is unusual
-        Write-Host "[dixy-install] Java detected."
-        Write-Host "[dixy-install] Java version output:"
-        Write-Host $rawOutput
-
-        return "unknown"
-    }
-    finally {
-        $ErrorActionPreference = $prevEAP
-    }
+if (-not $javaCommand) {
+    Write-Host ""
+    Write-Host "[ERROR] Java was not found on PATH." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Please install Java 21+ and restart PowerShell."
+    Write-Host ""
+    exit 1
 }
 
-$javaVersion = Get-JavaVersionString
-Write-Host "[dixy-install] Java detected: $javaVersion"
+Write-Host "[DIXY] Java found: $($javaCommand.Source)"
 
-New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+# Do NOT parse java -version.
+# Simply verify that Java can actually start.
+
+$javaProcess = Start-Process `
+    -FilePath $javaCommand.Source `
+    -ArgumentList "-version" `
+    -NoNewWindow `
+    -Wait `
+    -PassThru
+
+if ($javaProcess.ExitCode -ne 0) {
+    Write-Host ""
+    Write-Host "[ERROR] Java was found but could not be executed." -ForegroundColor Red
+    Write-Host ""
+    exit 1
+}
+
+Write-Host "[DIXY] Java is working."
+
+# ============================================================
+# Create installation directory
+# ============================================================
+
+Write-Host "[DIXY] Installation directory: $InstallDir"
+
+New-Item `
+    -ItemType Directory `
+    -Force `
+    -Path $InstallDir | Out-Null
+
+# ============================================================
+# Release URL
+# ============================================================
 
 if ($Version -eq "latest") {
     $BaseUrl = "https://github.com/$Repo/releases/latest/download"
@@ -69,49 +83,174 @@ if ($Version -eq "latest") {
     $BaseUrl = "https://github.com/$Repo/releases/download/$Version"
 }
 
+# ============================================================
+# Download function
+# ============================================================
+
 function Download-Asset([string]$Name) {
+
     $url = "$BaseUrl/$Name"
     $destination = Join-Path $InstallDir $Name
 
-    Write-Host "[dixy-install] Downloading $Name..."
-    & curl.exe -fL --retry 3 --retry-delay 2 $url -o $destination
+    Write-Host ""
+    Write-Host "[DIXY] Downloading $Name..."
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "[ERROR] Failed to download $Name from $url"
+    try {
+
+        Invoke-WebRequest `
+            -Uri $url `
+            -OutFile $destination `
+            -UseBasicParsing
+
     }
+    catch {
+
+        Write-Host ""
+        Write-Host "[ERROR] Failed to download $Name" -ForegroundColor Red
+        Write-Host "[ERROR] URL: $url" -ForegroundColor Red
+        Write-Host ""
+        Write-Host $_.Exception.Message
+
+        throw
+    }
+
+    if (-not (Test-Path $destination)) {
+        throw "[ERROR] Download completed but $Name was not found."
+    }
+
+    Write-Host "[DIXY] Downloaded: $Name"
 }
 
-Write-Host "[dixy-install] Installing DIXY $Version..."
-Write-Host "[dixy-install] Target directory: $InstallDir"
+# ============================================================
+# Download DIXY
+# ============================================================
+
+Write-Host ""
+Write-Host "[DIXY] Installing DIXY $Version..."
 
 Download-Asset "dixy-agent.jar"
 Download-Asset "dixy-cli.jar"
 Download-Asset "dixy.bat"
 
-# Add the DIXY directory to the current user's PATH.
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+# ============================================================
+# Configure PATH
+# ============================================================
+
+Write-Host ""
+Write-Host "[DIXY] Configuring PATH..."
+
+$userPath = [Environment]::GetEnvironmentVariable(
+    "Path",
+    "User"
+)
+
 $pathEntries = @()
+
 if ($userPath) {
-    $pathEntries = $userPath -split ';' | Where-Object { $_ -and $_.Trim() }
+
+    $pathEntries = $userPath `
+        -split ';' `
+        | Where-Object {
+            $_ -and $_.Trim()
+        }
 }
 
 $alreadyPresent = $pathEntries | Where-Object {
-    [string]::Equals($_.TrimEnd('\'), $InstallDir.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)
+
+    [string]::Equals(
+        $_.TrimEnd('\'),
+        $InstallDir.TrimEnd('\'),
+        [System.StringComparison]::OrdinalIgnoreCase
+    )
 }
 
 if (-not $alreadyPresent) {
-    $newUserPath = (($pathEntries + $InstallDir) -join ';')
-    [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
-    Write-Host "[dixy-install] Added $InstallDir to your user PATH."
-    Write-Host "[dixy-install] Open a NEW PowerShell/Command Prompt window before using 'dixy'."
+
+    $newUserPath = (
+        ($pathEntries + $InstallDir) -join ';'
+    )
+
+    [Environment]::SetEnvironmentVariable(
+        "Path",
+        $newUserPath,
+        "User"
+    )
+
+    Write-Host "[DIXY] Added $InstallDir to user PATH."
+
+}
+else {
+
+    Write-Host "[DIXY] DIXY is already in PATH."
+
 }
 
+# ============================================================
+# Refresh current PowerShell PATH
+# ============================================================
+
+$machinePath = [Environment]::GetEnvironmentVariable(
+    "Path",
+    "Machine"
+)
+
+$currentUserPath = [Environment]::GetEnvironmentVariable(
+    "Path",
+    "User"
+)
+
+$env:Path = "$currentUserPath;$machinePath"
+
+# ============================================================
+# Verify installation
+# ============================================================
+
 Write-Host ""
-Write-Host "[dixy-install] DIXY installed successfully."
-Write-Host "[dixy-install] Location: $InstallDir"
+Write-Host "[DIXY] Verifying installation..."
+
+$requiredFiles = @(
+    "dixy-agent.jar",
+    "dixy-cli.jar",
+    "dixy.bat"
+)
+
+foreach ($file in $requiredFiles) {
+
+    $filePath = Join-Path $InstallDir $file
+
+    if (-not (Test-Path $filePath)) {
+
+        throw "[ERROR] Installation verification failed: $file"
+
+    }
+
+    Write-Host "[DIXY] OK: $file"
+}
+
+# ============================================================
+# Success
+# ============================================================
+
 Write-Host ""
-Write-Host "[dixy-install] Usage:"
-Write-Host "    dixy.bat path\to\your-application.jar"
+Write-Host "========================================"
+Write-Host "       DIXY INSTALLED SUCCESSFULLY"
+Write-Host "========================================"
 Write-Host ""
-Write-Host "[dixy-install] To install a specific release:"
-Write-Host "    `$env:DIXY_VERSION='v6.8.0'; irm https://raw.githubusercontent.com/roy-gunjan743/DIXY-CLI/main/install.ps1 | iex"
+
+Write-Host "Location:"
+Write-Host "  $InstallDir"
+
+Write-Host ""
+Write-Host "You can now run:"
+Write-Host ""
+
+Write-Host "  dixy"
+
+Write-Host ""
+
+Write-Host "Or:"
+Write-Host ""
+
+Write-Host "  dixy path\to\your-application.jar"
+
+Write-Host ""
