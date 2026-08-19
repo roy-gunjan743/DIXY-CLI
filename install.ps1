@@ -23,18 +23,39 @@ Assert-Command "curl"
 
 function Get-JavaVersionString {
     $prevEAP = $ErrorActionPreference
-    $prevNativeEAP = $PSNativeCommandUseErrorActionPreference
-    $ErrorActionPreference = 'SilentlyContinue'
-    if ($null -ne $prevNativeEAP) { $PSNativeCommandUseErrorActionPreference = $false }
+
     try {
-        $rawOutput = & java -version 2>&1 | Out-String
-    } finally {
-        $ErrorActionPreference = $prevEAP
-        if ($null -ne $prevNativeEAP) { $PSNativeCommandUseErrorActionPreference = $prevNativeEAP }
+        $ErrorActionPreference = "SilentlyContinue"
+
+        $rawOutput = (& java -version 2>&1 | Out-String).Trim()
+
+        if ([string]::IsNullOrWhiteSpace($rawOutput)) {
+            throw "[ERROR] Java is installed but 'java -version' returned no output."
+        }
+
+        # Java normally prints:
+        # java version "21.0.11"
+        # openjdk version "21.0.11" 2024-04-16
+        # openjdk version "17.0.12" 2024-07-16
+        if ($rawOutput -match '(?i)(?:java|openjdk).*?version\s+"([^"]+)"') {
+            return $Matches[1]
+        }
+
+        # Fallback for unusual Java distributions
+        if ($rawOutput -match '(?i)version\s+["'']?([0-9]+(?:\.[0-9]+)*)') {
+            return $Matches[1]
+        }
+
+        # Don't fail installation just because version formatting is unusual
+        Write-Host "[dixy-install] Java detected."
+        Write-Host "[dixy-install] Java version output:"
+        Write-Host $rawOutput
+
+        return "unknown"
     }
-    $line = ($rawOutput -split "`r?`n" | Where-Object { $_ -match 'version' } | Select-Object -First 1)
-    if (-not $line) { throw "[ERROR] Could not detect Java version from 'java -version' output." }
-    return $line.Trim()
+    finally {
+        $ErrorActionPreference = $prevEAP
+    }
 }
 
 $javaVersion = Get-JavaVersionString
