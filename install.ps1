@@ -1,3 +1,35 @@
+$existingCli = Join-Path $InstallDir "dixy-cli.jar"
+$existingAgent = Join-Path $InstallDir "dixy-agent.jar"
+$existingBat = Join-Path $InstallDir "dixy.bat"
+
+if (
+    (Test-Path $existingCli) -and
+    (Test-Path $existingAgent) -and
+    (Test-Path $existingBat)
+) {
+    Write-Host ""
+    Write-Host "[DIXY] Existing installation detected." -ForegroundColor Yellow
+    Write-Host "[DIXY] Location: $InstallDir"
+    Write-Host ""
+
+    # Make sure PATH is still configured
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+
+    if ($userPath -notlike "*$InstallDir*") {
+        [Environment]::SetEnvironmentVariable(
+            "Path",
+            "$userPath;$InstallDir",
+            "User"
+        )
+
+        Write-Host "[DIXY] PATH configuration restored."
+    }
+
+    Write-Host "[DIXY] DIXY is already installed."
+    Write-Host ""
+
+    exit 0
+}
 $ErrorActionPreference = "Stop"
 
 # ============================================================
